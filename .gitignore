@@ -24,6 +24,7 @@
 !LICENSE
 !CONTRIBUTING.md
 !SECURITY.md
+!LOCAL_PATCHES.md
 
 # Скрипты
 !install_bot.sh
@@ -50,6 +51,8 @@
 !locales/**
 !.github/
 !.github/**
+!scripts/
+!scripts/**
 
 # ========== BLACKLIST: игнорируемые внутри папок ==========
 
