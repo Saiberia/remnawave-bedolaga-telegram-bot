@@ -1,0 +1,25 @@
+# Local patches on top of upstream
+
+Patches that live ONLY in this fork. Never get pushed back to BEDOLAGA-DEV
+(at least not from the [LOCAL] commits — they may be PR'd separately).
+
+Each patch must include a unique marker comment in the source. After every
+`git rebase upstream/main`, run `python3 scripts/verify_local_patches.py`.
+If the marker is missing, the patch was silently dropped or upstream
+overwrote it — investigate before continuing.
+
+## Active patches
+
+| File | Marker | Purpose |
+|---|---|---|
+| `app/cabinet/routes/subscription_modules/devices.py` | `[LOCAL-PATCH] only enforce 1ruble floor when there is something to charge` | Don't force `max(100, 0) = 100` kopeks when `chargeable_devices == 0` (free-within-tariff quota). Without this, cabinet `/devices/purchase` returns 402 with "1₽ required" while UI shows "free". |
+
+## Conventions
+
+- Every commit that adds/edits a local patch must have `[LOCAL]` prefix in
+  the commit subject. Example:
+  `[LOCAL] cabinet/devices: don't force 1ruble floor when chargeable_devices is 0`
+- Include the marker comment directly above the patched line(s).
+- Update this table when adding/removing a patch.
+- After upstream merge of an equivalent fix, drop the [LOCAL] commit
+  (and the marker) on the next rebase.
