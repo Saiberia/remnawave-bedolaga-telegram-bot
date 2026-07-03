@@ -1930,6 +1930,29 @@ async def recover_stuck_pending_purchases(
     if not pending_purchases:
         return 0
 
+    # [LOCAL-PATCH] yookassa-api-reconcile: self-heal lost YooKassa webhooks.
+    # The provider-table scan below (via _find_succeeded_provider_payment) only
+    # sees rows a webhook already marked 'succeeded'. When a YooKassa webhook is
+    # never delivered, the local yookassa_payments row stays 'pending' and
+    # recovery is blind — the guest pays but never gets a key. Here we actively
+    # poll the YooKassa API for each stuck PENDING YooKassa purchase and, if the
+    # provider confirms the payment, mirror the webhook's effect on the local
+    # row. Amount verification and fulfillment stay in the tested path below.
+    # Best-effort and idempotent: any failure is logged and never propagates.
+    if settings.is_yookassa_enabled():
+        for token, payment_method in pending_purchases:
+            if _resolve_base_payment_method(payment_method) != 'yookassa':
+                continue
+            try:
+                async with AsyncSessionLocal() as reconcile_db:
+                    await _reconcile_yookassa_row_from_api(reconcile_db, token)
+            except Exception:
+                logger.warning(
+                    'YooKassa API reconcile failed (non-fatal)',
+                    token_prefix=token[:5],
+                    exc_info=True,
+                )
+
     recovered = 0
     for token, payment_method in pending_purchases:
         try:
@@ -1941,6 +1964,61 @@ async def recover_stuck_pending_purchases(
             logger.exception('Failed to recover pending purchase', token_length=len(token))
 
     return recovered
+
+
+async def _reconcile_yookassa_row_from_api(db: AsyncSession, purchase_token: str) -> bool:
+    """[LOCAL-PATCH] yookassa-api-reconcile — mirror a lost webhook from the API.
+
+    If the local yookassa_payments row for ``purchase_token`` is still 'pending'
+    but the YooKassa API reports the payment as succeeded/paid (the webhook was
+    never delivered), update the local row exactly as the webhook handler would.
+    That lets recover_stuck_pending_purchases pick it up through the normal,
+    amount-verified path. Idempotent: a no-op when the row is already succeeded /
+    absent, or when the API does not confirm the payment. Safe to call each cycle.
+
+    Returns True only when it actually flipped a row pending -> succeeded.
+    """
+    from sqlalchemy import text
+
+    from app.services.yookassa_service import YooKassaService
+
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, yookassa_payment_id FROM yookassa_payments "
+                "WHERE status = 'pending' "
+                "AND metadata_json->>'purchase_token' = :t "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {'t': purchase_token},
+        )
+    ).first()
+    if row is None or not row.yookassa_payment_id:
+        return False
+
+    info = await YooKassaService().get_payment_info(row.yookassa_payment_id)
+    if not info or info.get('status') != 'succeeded' or not info.get('paid'):
+        return False
+
+    # Mirror the webhook effect. The WHERE status='pending' guard keeps this
+    # idempotent and race-safe if a real webhook lands at the same moment.
+    result = await db.execute(
+        text(
+            "UPDATE yookassa_payments SET status = 'succeeded', is_paid = true, "
+            "is_captured = true, captured_at = COALESCE(captured_at, now()) "
+            "WHERE id = :id AND status = 'pending'"
+        ),
+        {'id': row.id},
+    )
+    await db.commit()
+    if result.rowcount:
+        logger.info(
+            'YooKassa row reconciled from API (lost webhook)',
+            token_prefix=purchase_token[:5],
+            yk_id=row.yookassa_payment_id,
+        )
+        return True
+    return False
 
 
 async def _find_succeeded_provider_payment(
