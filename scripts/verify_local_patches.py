@@ -23,6 +23,10 @@ PATCHES: list[tuple[str, str]] = [
         'app/cabinet/routes/subscription_modules/devices.py',
         '[LOCAL-PATCH] only enforce 1ruble floor when there is something to charge',
     ),
+    (
+        'app/services/guest_purchase_service.py',
+        '[LOCAL-PATCH] yookassa-api-reconcile',
+    ),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
