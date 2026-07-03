@@ -13,6 +13,7 @@ overwrote it — investigate before continuing.
 | File | Marker | Purpose |
 |---|---|---|
 | `app/cabinet/routes/subscription_modules/devices.py` | `[LOCAL-PATCH] only enforce 1ruble floor when there is something to charge` | Don't force `max(100, 0) = 100` kopeks when `chargeable_devices == 0` (free-within-tariff quota). Without this, cabinet `/devices/purchase` returns 402 with "1₽ required" while UI shows "free". |
+| `app/services/guest_purchase_service.py` | `[LOCAL-PATCH] yookassa-api-reconcile` | Self-heal lost YooKassa webhooks. `recover_stuck_pending_purchases` only sees local rows a webhook already marked succeeded; when the webhook is never delivered the row stays `pending` and the guest never gets a key. Pre-pass polls the YooKassa API for stuck PENDING yookassa purchases and mirrors the webhook effect onto the local row, then the tested amount-verified recovery/fulfillment path takes over. Idempotent, best-effort. |
 
 ## Conventions
 
