@@ -2156,7 +2156,16 @@ class RemnaWaveService:
                         continue
 
                     # Check if subscription with this panel id already exists for this user
-                    if any(_normalize_panel_user_id(s.remnawave_id) == panel_user_id for s in _user_subs):
+                    # [LOCAL-PATCH] multitariff-sync-dedup-guard: also dedup by panel shortUuid.
+                    # Bot-side purchased subscriptions carry remnawave_short_uuid but an empty
+                    # remnawave_id, so panel-id-only matching made the nightly full sync INSERT
+                    # a duplicate row and crash the whole batch on uq_subscriptions_user_tariff_active.
+                    _panel_short_uuid = panel_user.get('shortUuid')
+                    if any(
+                        _normalize_panel_user_id(s.remnawave_id) == panel_user_id
+                        or (_panel_short_uuid and s.remnawave_short_uuid == _panel_short_uuid)
+                        for s in _user_subs
+                    ):
                         continue
 
                     try:
@@ -2199,6 +2208,23 @@ class RemnaWaveService:
                             except Exception:
                                 pass
 
+                        # [LOCAL-PATCH] multitariff-sync-dedup-guard: uq_subscriptions_user_tariff_active
+                        # is a partial unique index forbidding two active/trial/limited subscriptions
+                        # with the same (user_id, tariff_id). Skip creation instead of crashing the
+                        # whole sync batch at commit time.
+                        if _matched_tariff_id is not None and any(
+                            s.tariff_id == _matched_tariff_id
+                            and s.status in ('active', 'trial', 'limited')
+                            for s in _user_subs
+                        ):
+                            logger.info(
+                                '⚠️ [multi-tariff] Active subscription with the same tariff already exists — skipping creation',
+                                panel_user_id=panel_user_id,
+                                user_id=_bot_user.id,
+                                tariff_id=_matched_tariff_id,
+                            )
+                            stats['skipped_duplicate_tariff'] = stats.get('skipped_duplicate_tariff', 0) + 1
+                            continue
                         new_sub = Subscription(
                             user_id=_bot_user.id,
                             status=_sub_status.value,
