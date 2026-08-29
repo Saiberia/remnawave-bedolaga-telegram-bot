@@ -2253,6 +2253,23 @@ class RemnaWaveService:
                             except Exception:
                                 pass
 
+                        # [LOCAL-PATCH] multitariff-sync-dedup-guard: uq_subscriptions_user_tariff_active
+                        # is a partial unique index forbidding two active/trial/limited subscriptions
+                        # with the same (user_id, tariff_id). Skip creation instead of crashing the
+                        # whole sync batch at commit time.
+                        if _matched_tariff_id is not None and any(
+                            s.tariff_id == _matched_tariff_id
+                            and s.status in ('active', 'trial', 'limited')
+                            for s in _user_subs
+                        ):
+                            logger.info(
+                                '⚠️ [multi-tariff] Active subscription with the same tariff already exists — skipping creation',
+                                panel_user_id=panel_user_id,
+                                user_id=_bot_user.id,
+                                tariff_id=_matched_tariff_id,
+                            )
+                            stats['skipped_duplicate_tariff'] = stats.get('skipped_duplicate_tariff', 0) + 1
+                            continue
                         new_sub = Subscription(
                             user_id=_bot_user.id,
                             status=_sub_status.value,

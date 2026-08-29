@@ -27,6 +27,10 @@ PATCHES: list[tuple[str, str]] = [
         'app/services/guest_purchase_service.py',
         '[LOCAL-PATCH] yookassa-api-reconcile',
     ),
+    (
+        'app/services/remnawave_service.py',
+        '[LOCAL-PATCH] multitariff-sync-dedup-guard',
+    ),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
