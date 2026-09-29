@@ -1813,6 +1813,23 @@ class RemnaWaveService:
                 processed_count = 0
                 cleanup_panel_id_mutations: list[_PanelIdMapMutation] = []
 
+                # [LOCAL-PATCH] sync-no-deactivate-live-panel-user: the telegramId lookup alone
+                # disabled paid subscriptions whose panel account exists and is ACTIVE but has no
+                # telegramId (gift_* / renamed accounts) while the bot user lost its remnawave_id.
+                # Never deactivate when any subscription still points to a live panel account by
+                # shortUuid or panel id.
+                _live_panel_short_uuids = {u.get('shortUuid') for u in panel_users if u.get('shortUuid')}
+                _live_panel_ids = {
+                    _pid for _pid in (_normalize_panel_user_id(u.get('id')) for u in panel_users) if _pid is not None
+                }
+
+                def _points_to_live_panel_user(_db_user) -> bool:
+                    return any(
+                        (_s.remnawave_short_uuid and _s.remnawave_short_uuid in _live_panel_short_uuids)
+                        or (_normalize_panel_user_id(_s.remnawave_id) in _live_panel_ids)
+                        for _s in (getattr(_db_user, 'subscriptions', None) or [])
+                    )
+
                 # Собираем список пользователей для деактивации
                 users_to_deactivate = [
                     (telegram_id, db_user)
@@ -1822,6 +1839,7 @@ class RemnaWaveService:
                     # BUG-6 fix: Skip users who have a remnawave_id — they exist in panel
                     # but may not have telegram_id set there (OAuth users who linked TG later)
                     and not getattr(db_user, 'remnawave_id', None)
+                    and not _points_to_live_panel_user(db_user)
                 ]
 
                 if users_to_deactivate:

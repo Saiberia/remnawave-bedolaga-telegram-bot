@@ -31,6 +31,10 @@ PATCHES: list[tuple[str, str]] = [
         'app/services/remnawave_service.py',
         '[LOCAL-PATCH] multitariff-sync-dedup-guard',
     ),
+    (
+        'app/services/remnawave_service.py',
+        '[LOCAL-PATCH] sync-no-deactivate-live-panel-user',
+    ),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
