@@ -30,6 +30,7 @@ Telegram бывают у двух записей одного человека, 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import or_, select
@@ -110,6 +111,55 @@ def _not_deleted():
     return or_(User.status.is_(None), User.status != UserStatus.DELETED.value)
 
 
+def _is_paid_live(subscription, now: datetime) -> bool:
+    """Подписка сейчас действует: активна/триал и срок в будущем."""
+    end_date = getattr(subscription, 'end_date', None)
+    if end_date is None or getattr(subscription, 'status', None) not in ('active', 'trial'):
+        return False
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=UTC)
+    return end_date > now
+
+
+async def _release_dead_sibling(db, subscription, holder_id: int) -> bool:
+    """Забрать аккаунт панели у мёртвой соседней подписки того же человека.
+
+    [LOCAL-PATCH] renewal-takes-over-dead-sibling-panel-account
+
+    В мультитарифе у человека бывают две строки с одним ``shortUuid``: старая
+    (``disabled``, без тарифа — после чистки когорты 2026-06-12) и живая, которая
+    держала аккаунт панели. Когда живая истекла, продление в кабинете оживило
+    старую строку, а аккаунт числился за истёкшей — ``PanelAccountOwnedByAnotherUser``:
+    человек платил и оставался без доступа (2026-10-04, user 731).
+
+    Считаем соседа не хозяином только если одновременно: тот же человек, тот же
+    непустой ``shortUuid`` (это один и тот же аккаунт панели), продлеваемая подписка
+    живая, а сосед мёртвый. Тогда снимаем ``remnawave_id`` у соседа (flush, коммит —
+    за вызывающим), и дальше аккаунт достаётся продлеваемой строке. Любое
+    сомнение — не трогаем: запись откажется громко, как раньше.
+    """
+    short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
+    if not short_uuid:
+        return False
+    holder = await db.get(Subscription, holder_id)
+    if holder is None or (getattr(holder, 'remnawave_short_uuid', None) or '').strip() != short_uuid:
+        return False
+    now = datetime.now(UTC)
+    if not _is_paid_live(subscription, now) or _is_paid_live(holder, now):
+        return False
+    released_panel_id = holder.remnawave_id
+    holder.remnawave_id = None
+    await db.flush()
+    logger.warning(
+        '♻️ Аккаунт панели снят с мёртвой подписки того же человека — достаётся продлеваемой',
+        panel_user_id=released_panel_id,
+        from_subscription_id=holder_id,
+        to_subscription_id=getattr(subscription, 'id', None),
+        user_id=getattr(subscription, 'user_id', None),
+    )
+    return True
+
+
 async def find_foreign_panel_owner(db, user, subscription, panel_id, *, multi_tariff: bool) -> PanelOwner | None:
     """Чей это аккаунт панели, если не этой подписки; ``None`` — наш или ничей.
 
@@ -145,6 +195,12 @@ async def find_foreign_panel_owner(db, user, subscription, panel_id, *, multi_ta
         if holder_id == getattr(subscription, 'id', None):
             return None
         if not multi_tariff and holder_user_id == getattr(user, 'id', None):
+            return None
+        if (
+            multi_tariff
+            and holder_user_id == getattr(user, 'id', None)
+            and await _release_dead_sibling(db, subscription, holder_id)
+        ):
             return None
         return PanelOwner(user_id=holder_user_id, subscription_id=holder_id)
 

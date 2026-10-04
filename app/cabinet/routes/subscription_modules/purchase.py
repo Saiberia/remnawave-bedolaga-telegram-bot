@@ -1168,6 +1168,10 @@ async def purchase_tariff(
                 await decrement_subscription_server_counts(db, trial_sub)
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
+        # [LOCAL-PATCH] purchase-ids-before-panel-sync: после отката в сервисе атрибуты
+        # объекта протухают, и чтение .id вне greenlet даёт MissingGreenlet.
+        _sync_subscription_id = subscription.id
+        _sync_user_id = user.id
         try:
             # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_id
             # (webhook clears it on panel deletion), not subscription.remnawave_id
@@ -1199,8 +1203,8 @@ async def purchase_tariff(
             from app.services.remnawave_retry_queue import remnawave_retry_queue
 
             remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=user.id,
+                subscription_id=_sync_subscription_id,
+                user_id=_sync_user_id,
                 action='create' if _should_create else 'update',
             )
 
@@ -1209,14 +1213,14 @@ async def purchase_tariff(
             try:
                 cart_data = {
                     'cart_mode': 'extend',
-                    'subscription_id': subscription.id,
+                    'subscription_id': _sync_subscription_id,
                     'period_days': period_days,
                     'total_price': price_kopeks,
                     'tariff_id': tariff.id,
                     'description': f'Продление тарифа {tariff.name} на {period_days} дней',
                 }
-                await user_cart_service.save_user_cart(user.id, cart_data)
-                logger.info('Tariff cart saved for auto-renewal (cabinet) user', user_id=user.id)
+                await user_cart_service.save_user_cart(_sync_user_id, cart_data)
+                logger.info('Tariff cart saved for auto-renewal (cabinet) user', user_id=_sync_user_id)
             except Exception as e:
                 logger.error('Error saving tariff cart (cabinet)', error=e)
 

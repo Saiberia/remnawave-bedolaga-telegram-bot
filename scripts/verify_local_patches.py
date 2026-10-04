@@ -35,6 +35,14 @@ PATCHES: list[tuple[str, str]] = [
         'app/services/remnawave_service.py',
         '[LOCAL-PATCH] sync-no-deactivate-live-panel-user',
     ),
+    (
+        'app/services/panel_sync/identity.py',
+        '[LOCAL-PATCH] renewal-takes-over-dead-sibling-panel-account',
+    ),
+    (
+        'app/cabinet/routes/subscription_modules/purchase.py',
+        '[LOCAL-PATCH] purchase-ids-before-panel-sync',
+    ),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
